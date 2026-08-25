@@ -1,0 +1,7 @@
+[package]
+name = "subtitle-lint"
+version = "0.1.0"
+edition = "2021"
+authors = ["kevinb829"]
+license = "MIT"
+description = "A streaming linter for SubRip (.srt) subtitle files"
