@@ -1,9 +1,9 @@
 # subtitle-lint
 
-A linter for SubRip (`.srt`) subtitle files. It checks cue timing and text
-for the kind of mistakes that don't show up until a video plays: timestamps
-that run backwards, cues that overlap the one before them, empty cues, and
-lines too long to read comfortably.
+A linter for SubRip (`.srt`) and WebVTT (`.vtt`) subtitle files. It checks
+cue timing and text for the kind of mistakes that don't show up until a
+video plays: timestamps that run backwards, cues that overlap the one
+before them, empty cues, and lines too long to read comfortably.
 
 ## Why
 
@@ -37,6 +37,12 @@ a file:
 $ curl -s https://example.com/captions.srt | subtitle-lint -
 ```
 
+Format is detected from the content, not the file extension or a flag: if
+the first block is a `WEBVTT` header, the rest of the stream is read as
+WebVTT (cue identifiers, cue settings, and `NOTE`/`STYLE`/`REGION` blocks
+are all handled); otherwise it's read as SRT. This is what lets `-` work
+for either format.
+
 ## What it checks today
 
 - Malformed cue index or timing line
@@ -56,8 +62,8 @@ cargo build --release
 ## Roadmap
 
 See the roadmap in the project's issue tracker / commit history for what's
-planned next: WebVTT support, duplicate-text detection, configurable line
-length, and a `--fix` mode for the mechanical cases.
+planned next: duplicate-text detection, configurable line length, and a
+`--fix` mode for the mechanical cases.
 
 ## License
 

@@ -37,6 +37,31 @@ impl Timestamp {
         })
     }
 
+    /// Parses a WebVTT timestamp: "HH:MM:SS.mmm" or, since WebVTT allows the
+    /// hours field to be dropped for cues under an hour, "MM:SS.mmm".
+    pub fn parse_vtt(raw: &str) -> Option<Timestamp> {
+        let raw = raw.trim();
+        let (time_part, ms_part) = raw.split_once('.')?;
+        if ms_part.len() != 3 || !ms_part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let millis: u32 = ms_part.parse().ok()?;
+
+        let fields: Vec<&str> = time_part.split(':').collect();
+        let (hours, minutes, seconds): (u32, u32, u32) = match fields.as_slice() {
+            [h, m, s] => (h.parse().ok()?, m.parse().ok()?, s.parse().ok()?),
+            [m, s] => (0, m.parse().ok()?, s.parse().ok()?),
+            _ => return None,
+        };
+        if minutes >= 60 || seconds >= 60 {
+            return None;
+        }
+
+        Some(Timestamp {
+            millis: ((hours * 3600 + minutes * 60 + seconds) * 1000) + millis,
+        })
+    }
+
     pub fn as_millis(&self) -> u32 {
         self.millis
     }

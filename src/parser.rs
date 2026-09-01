@@ -2,10 +2,39 @@ use std::io::{self, BufRead, Lines};
 
 use crate::timestamp::Timestamp;
 
+/// Which subtitle format a stream is being read as. Detected once, from the
+/// first block of the file, and then applied to every cue after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Srt,
+    Vtt,
+}
+
 /// A single cue's worth of raw lines, still tagged with their original
 /// line numbers so later stages can report accurate positions.
 pub struct RawBlock {
     pub lines: Vec<(usize, String)>,
+}
+
+impl RawBlock {
+    /// True for the file's leading `WEBVTT` header block, which carries no
+    /// timing of its own and is optionally followed by free-text metadata
+    /// on the same line.
+    pub fn is_webvtt_header(&self) -> bool {
+        self.lines.first().map_or(false, |(_, line)| {
+            let line = line.trim_start_matches('\u{feff}'); // optional BOM
+            line == "WEBVTT" || line.starts_with("WEBVTT ") || line.starts_with("WEBVTT\t")
+        })
+    }
+
+    /// True for WebVTT `NOTE`, `STYLE`, and `REGION` blocks, none of which
+    /// are cues and all of which should be skipped rather than parsed.
+    pub fn is_skippable_vtt_block(&self) -> bool {
+        self.lines.first().map_or(false, |(_, line)| {
+            let line = line.trim_start();
+            line.starts_with("NOTE") || line.starts_with("STYLE") || line.starts_with("REGION")
+        })
+    }
 }
 
 pub enum BlockError {
@@ -70,41 +99,78 @@ pub struct Subtitle {
 }
 
 impl Subtitle {
-    pub fn from_raw(raw: &RawBlock) -> Result<Subtitle, BlockError> {
-        let mut lines = raw.lines.iter();
+    /// Parses a raw block according to `format`. SRT blocks are always
+    /// `index, timing, text...`. VTT blocks are `[identifier], timing,
+    /// text...` — the identifier is optional, so a VTT block's timing line
+    /// is whichever of the first two lines contains "-->". VTT timing lines
+    /// may also carry cue settings (e.g. "align:start line:0") after the
+    /// end timestamp, which are accepted but ignored.
+    pub fn from_raw(raw: &RawBlock, format: Format) -> Result<Subtitle, BlockError> {
+        let lines = &raw.lines;
 
-        let (index_line, index_text) = lines.next().ok_or_else(|| BlockError::Malformed {
+        let (first_line, first_text) = lines.first().ok_or_else(|| BlockError::Malformed {
             line: 0,
             reason: "empty block".to_string(),
         })?;
-        if index_text.trim().parse::<u32>().is_err() {
-            return Err(BlockError::Malformed {
-                line: *index_line,
-                reason: format!("expected a numeric cue index, found \"{}\"", index_text.trim()),
-            });
-        }
 
-        let (timing_line, timing_text) = lines.next().ok_or_else(|| BlockError::Malformed {
-            line: *index_line,
-            reason: "cue has an index but no timing line".to_string(),
+        let timing_idx = match format {
+            Format::Srt => {
+                if first_text.trim().parse::<u32>().is_err() {
+                    return Err(BlockError::Malformed {
+                        line: *first_line,
+                        reason: format!(
+                            "expected a numeric cue index, found \"{}\"",
+                            first_text.trim()
+                        ),
+                    });
+                }
+                1
+            }
+            Format::Vtt => {
+                if first_text.contains("-->") {
+                    0
+                } else {
+                    1
+                }
+            }
+        };
+
+        let (timing_line, timing_text) = lines.get(timing_idx).ok_or_else(|| BlockError::Malformed {
+            line: *first_line,
+            reason: "block is missing a timing line".to_string(),
         })?;
 
-        let (start_raw, end_raw) =
+        let (start_raw, rest) =
             timing_text.split_once("-->").ok_or_else(|| BlockError::Malformed {
                 line: *timing_line,
                 reason: format!("timing line has no \"-->\": \"{}\"", timing_text),
             })?;
 
-        let start = Timestamp::parse(start_raw).ok_or_else(|| BlockError::Malformed {
+        // SRT has nothing after the end timestamp; VTT may have cue
+        // settings, so only take the first whitespace-separated token.
+        let end_raw = match format {
+            Format::Srt => rest,
+            Format::Vtt => rest.trim_start().split_whitespace().next().unwrap_or(rest),
+        };
+
+        let parse_ts: fn(&str) -> Option<Timestamp> = match format {
+            Format::Srt => Timestamp::parse,
+            Format::Vtt => Timestamp::parse_vtt,
+        };
+
+        let start = parse_ts(start_raw).ok_or_else(|| BlockError::Malformed {
             line: *timing_line,
             reason: format!("could not parse start time \"{}\"", start_raw.trim()),
         })?;
-        let end = Timestamp::parse(end_raw).ok_or_else(|| BlockError::Malformed {
+        let end = parse_ts(end_raw).ok_or_else(|| BlockError::Malformed {
             line: *timing_line,
             reason: format!("could not parse end time \"{}\"", end_raw.trim()),
         })?;
 
-        let text = lines.map(|(n, s)| (*n, s.clone())).collect();
+        let text = lines[timing_idx + 1..]
+            .iter()
+            .map(|(n, s)| (*n, s.clone()))
+            .collect();
 
         Ok(Subtitle {
             timing_line: *timing_line,

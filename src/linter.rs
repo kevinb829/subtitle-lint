@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::BufRead;
 
-use crate::parser::{BlockError, Subtitle, SubtitleReader};
+use crate::parser::{BlockError, Format, Subtitle, SubtitleReader};
 use crate::timestamp::Timestamp;
 
 // Common subtitling guideline (e.g. Netflix timed text style guides) caps
@@ -42,13 +42,27 @@ impl Finding {
 
 /// Lints a subtitle stream, reading and checking one cue at a time so the
 /// caller can hand this a multi-gigabyte file without it landing in memory.
+///
+/// The format (SRT or VTT) is sniffed from the stream itself rather than
+/// passed in, since it's determined entirely by whether the first block is
+/// a `WEBVTT` header — the caller (stdin included) doesn't need to know.
 pub fn lint<R: BufRead>(reader: R) -> Vec<Finding> {
     let mut reader = SubtitleReader::new(reader);
     let mut findings = Vec::new();
     // Only the previous cue's end time is kept around, not the cue itself.
     let mut previous_end: Option<Timestamp> = None;
 
-    while let Some(block) = reader.next_block() {
+    let mut pending = reader.next_block();
+    let format = if matches!(&pending, Some(Ok(raw)) if raw.is_webvtt_header()) {
+        pending = reader.next_block(); // consume the header, it's not a cue
+        Format::Vtt
+    } else {
+        Format::Srt
+    };
+
+    while let Some(block) = pending {
+        pending = reader.next_block();
+
         let raw = match block {
             Ok(raw) => raw,
             Err(BlockError::Io(e)) => {
@@ -61,7 +75,11 @@ pub fn lint<R: BufRead>(reader: R) -> Vec<Finding> {
             }
         };
 
-        let subtitle = match Subtitle::from_raw(&raw) {
+        if format == Format::Vtt && raw.is_skippable_vtt_block() {
+            continue;
+        }
+
+        let subtitle = match Subtitle::from_raw(&raw, format) {
             Ok(s) => s,
             Err(BlockError::Io(e)) => {
                 findings.push(Finding::new(0, Severity::Error, format!("read error: {}", e)));
