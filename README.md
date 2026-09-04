@@ -50,6 +50,7 @@ for either format.
 - A cue starting before the previous one ends
 - Empty cue text
 - Text lines longer than 42 characters
+- Cue text identical or nearly identical to the cue right before it
 
 ## Building
 
@@ -62,7 +63,7 @@ cargo build --release
 ## Roadmap
 
 See the roadmap in the project's issue tracker / commit history for what's
-planned next: duplicate-text detection, configurable line length, and a
+planned next: configurable line length and rules via a config file, and a
 `--fix` mode for the mechanical cases.
 
 ## License
