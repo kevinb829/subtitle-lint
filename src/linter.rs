@@ -1,12 +1,9 @@
 use std::fmt;
 use std::io::BufRead;
 
+use crate::config::Config;
 use crate::parser::{BlockError, Format, Subtitle, SubtitleReader};
 use crate::timestamp::Timestamp;
-
-// Common subtitling guideline (e.g. Netflix timed text style guides) caps
-// a single displayed line around this many characters for readability.
-const MAX_LINE_LEN: usize = 42;
 
 // Below this normalized length, short cues ("Yes." / "No.") are too likely
 // to collide by chance to be worth flagging as near-duplicates.
@@ -50,7 +47,7 @@ impl Finding {
 /// The format (SRT or VTT) is sniffed from the stream itself rather than
 /// passed in, since it's determined entirely by whether the first block is
 /// a `WEBVTT` header — the caller (stdin included) doesn't need to know.
-pub fn lint<R: BufRead>(reader: R) -> Vec<Finding> {
+pub fn lint<R: BufRead>(reader: R, config: &Config) -> Vec<Finding> {
     let mut reader = SubtitleReader::new(reader);
     let mut findings = Vec::new();
     // Only the previous cue's end time and text are kept around, not the
@@ -99,9 +96,13 @@ pub fn lint<R: BufRead>(reader: R) -> Vec<Finding> {
         };
 
         check_ordering(&subtitle, &mut findings);
-        check_overlap(&subtitle, previous_end, &mut findings);
-        check_text(&subtitle, &mut findings);
-        check_duplicate_text(&subtitle, previous_text.as_ref(), &mut findings);
+        if config.check_overlap {
+            check_overlap(&subtitle, previous_end, &mut findings);
+        }
+        check_text(&subtitle, config, &mut findings);
+        if config.check_duplicate_text {
+            check_duplicate_text(&subtitle, previous_text.as_ref(), &mut findings);
+        }
 
         previous_end = Some(subtitle.end);
         if !subtitle.text.is_empty() {
@@ -138,7 +139,7 @@ fn check_overlap(subtitle: &Subtitle, previous_end: Option<Timestamp>, findings:
     }
 }
 
-fn check_text(subtitle: &Subtitle, findings: &mut Vec<Finding>) {
+fn check_text(subtitle: &Subtitle, config: &Config, findings: &mut Vec<Finding>) {
     if subtitle.text.is_empty() {
         findings.push(Finding::new(
             subtitle.timing_line,
@@ -150,11 +151,14 @@ fn check_text(subtitle: &Subtitle, findings: &mut Vec<Finding>) {
 
     for (line, text) in &subtitle.text {
         let len = text.chars().count();
-        if len > MAX_LINE_LEN {
+        if len > config.max_line_length {
             findings.push(Finding::new(
                 *line,
                 Severity::Warning,
-                format!("line is {} characters, longer than the recommended {}", len, MAX_LINE_LEN),
+                format!(
+                    "line is {} characters, longer than the recommended {}",
+                    len, config.max_line_length
+                ),
             ));
         }
     }

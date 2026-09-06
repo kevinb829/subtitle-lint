@@ -43,6 +43,29 @@ WebVTT (cue identifiers, cue settings, and `NOTE`/`STYLE`/`REGION` blocks
 are all handled); otherwise it's read as SRT. This is what lets `-` work
 for either format.
 
+## Configuration
+
+By default the linter uses a 42-character line length and runs every check.
+Pass `--config` to point at a plain text file to change that:
+
+```
+$ cat subtitle-lint.conf
+max_line_length = 50
+check_overlap = true
+check_duplicate_text = false
+
+$ subtitle-lint --config subtitle-lint.conf movie.srt
+```
+
+Blank lines and `#` comments are ignored. The recognized keys are:
+
+- `max_line_length` — positive integer, default `42`
+- `check_overlap` — `true`/`false`, default `true`
+- `check_duplicate_text` — `true`/`false`, default `true`
+
+Malformed cue index/timing lines and end-before-start timing are always
+checked; they're correctness bugs, not style preferences.
+
 ## What it checks today
 
 - Malformed cue index or timing line
@@ -63,8 +86,8 @@ cargo build --release
 ## Roadmap
 
 See the roadmap in the project's issue tracker / commit history for what's
-planned next: configurable line length and rules via a config file, and a
-`--fix` mode for the mechanical cases.
+planned next: a `--fix` mode for the mechanical cases, a fixture-based test
+suite, and a JSON output mode for CI.
 
 ## License
 
