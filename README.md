@@ -83,11 +83,21 @@ Standard library only — no dependencies to fetch.
 cargo build --release
 ```
 
+## Testing
+
+`tests/cli.rs` runs the built binary against the `.srt`/`.vtt` fixtures under
+`tests/fixtures`, one file per rule, and checks the exact output and exit
+code:
+
+```
+cargo test
+```
+
 ## Roadmap
 
 See the roadmap in the project's issue tracker / commit history for what's
-planned next: a `--fix` mode for the mechanical cases, a fixture-based test
-suite, and a JSON output mode for CI.
+planned next: a `--fix` mode for the mechanical cases, and a JSON output
+mode for CI.
 
 ## License
 
