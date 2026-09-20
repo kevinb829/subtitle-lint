@@ -37,6 +37,19 @@ a file:
 $ curl -s https://example.com/captions.srt | subtitle-lint -
 ```
 
+Pass `--format json` to get findings as a JSON array instead, one object per
+finding, for feeding into a CI step:
+
+```
+$ subtitle-lint --format json movie.srt
+[
+  {"file": "movie.srt", "line": 14, "severity": "error", "message": "end time 00:00:22,100 is not after start time 00:00:24,000"}
+]
+```
+
+An empty array means no findings. The exit code rule is the same regardless
+of output format.
+
 Format is detected from the content, not the file extension or a flag: if
 the first block is a `WEBVTT` header, the rest of the stream is read as
 WebVTT (cue identifiers, cue settings, and `NOTE`/`STYLE`/`REGION` blocks
@@ -95,9 +108,8 @@ cargo test
 
 ## Roadmap
 
-See the roadmap in the project's issue tracker / commit history for what's
-planned next: a `--fix` mode for the mechanical cases, and a JSON output
-mode for CI.
+Next up: a `--fix` mode for the mechanical cases, starting with trimming
+overlaps so a cue's end time never runs past the next cue's start.
 
 ## License
 

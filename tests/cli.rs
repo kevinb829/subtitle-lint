@@ -139,3 +139,54 @@ fn vtt_notes_style_and_identifiers_are_handled() {
     assert_eq!(stdout, "");
     assert_eq!(code, 0);
 }
+
+#[test]
+fn json_format_reports_one_object_per_finding() {
+    let path = fixture("overlap.srt");
+    let output = Command::new(env!("CARGO_BIN_EXE_subtitle-lint"))
+        .arg("--format")
+        .arg("json")
+        .arg(&path)
+        .output()
+        .expect("failed to run subtitle-lint");
+    let stdout = String::from_utf8(output.stdout).expect("stdout was not utf8");
+    let code = output.status.code().expect("process terminated by signal");
+
+    assert_eq!(
+        stdout,
+        format!(
+            "[\n  {{\"file\": \"{}\", \"line\": 6, \"severity\": \"warning\", \"message\": \"cue starts at 00:00:03,000 before the previous cue ends at 00:00:04,000\"}}\n]\n",
+            path.display()
+        )
+    );
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn json_format_with_no_findings_is_an_empty_array() {
+    let path = fixture("clean.vtt");
+    let output = Command::new(env!("CARGO_BIN_EXE_subtitle-lint"))
+        .arg("--format")
+        .arg("json")
+        .arg(&path)
+        .output()
+        .expect("failed to run subtitle-lint");
+    let stdout = String::from_utf8(output.stdout).expect("stdout was not utf8");
+    let code = output.status.code().expect("process terminated by signal");
+
+    assert_eq!(stdout, "[\n]\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn unknown_format_is_a_usage_error() {
+    let path = fixture("clean.vtt");
+    let output = Command::new(env!("CARGO_BIN_EXE_subtitle-lint"))
+        .arg("--format")
+        .arg("yaml")
+        .arg(&path)
+        .output()
+        .expect("failed to run subtitle-lint");
+    let code = output.status.code().expect("process terminated by signal");
+    assert_eq!(code, 2);
+}
