@@ -65,6 +65,20 @@ impl Timestamp {
     pub fn as_millis(&self) -> u32 {
         self.millis
     }
+
+    /// Formats as a WebVTT timestamp ("HH:MM:SS.mmm"). Always includes the
+    /// hours field, even though `parse_vtt` accepts it being dropped, since
+    /// a canonical form is easier for a `--fix`'d file to reason about than
+    /// one that varies cue to cue.
+    pub fn to_vtt_string(&self) -> String {
+        let ms = self.millis % 1000;
+        let total_secs = self.millis / 1000;
+        let s = total_secs % 60;
+        let total_mins = total_secs / 60;
+        let m = total_mins % 60;
+        let h = total_mins / 60;
+        format!("{:02}:{:02}:{:02}.{:03}", h, m, s, ms)
+    }
 }
 
 impl fmt::Display for Timestamp {

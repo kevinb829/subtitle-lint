@@ -95,6 +95,11 @@ pub struct Subtitle {
     pub timing_line: usize,
     pub start: Timestamp,
     pub end: Timestamp,
+    /// Whatever follows the end timestamp on a VTT timing line (e.g. cue
+    /// settings like "align:start line:0"), or empty for SRT. Kept around
+    /// rather than discarded so `fix` can rewrite the timing line without
+    /// losing it.
+    pub end_suffix: String,
     pub text: Vec<(usize, String)>,
 }
 
@@ -104,7 +109,7 @@ impl Subtitle {
     /// text...` — the identifier is optional, so a VTT block's timing line
     /// is whichever of the first two lines contains "-->". VTT timing lines
     /// may also carry cue settings (e.g. "align:start line:0") after the
-    /// end timestamp, which are accepted but ignored.
+    /// end timestamp; these are kept in `end_suffix` rather than checked.
     pub fn from_raw(raw: &RawBlock, format: Format) -> Result<Subtitle, BlockError> {
         let lines = &raw.lines;
 
@@ -147,10 +152,17 @@ impl Subtitle {
             })?;
 
         // SRT has nothing after the end timestamp; VTT may have cue
-        // settings, so only take the first whitespace-separated token.
-        let end_raw = match format {
-            Format::Srt => rest,
-            Format::Vtt => rest.trim_start().split_whitespace().next().unwrap_or(rest),
+        // settings, so only take the first whitespace-separated token as
+        // the timestamp and keep the rest as end_suffix.
+        let (end_raw, end_suffix): (&str, &str) = match format {
+            Format::Srt => (rest, ""),
+            Format::Vtt => {
+                let trimmed = rest.trim_start();
+                match trimmed.split_once(char::is_whitespace) {
+                    Some((token, suffix)) => (token, suffix.trim_start()),
+                    None => (trimmed, ""),
+                }
+            }
         };
 
         let parse_ts: fn(&str) -> Option<Timestamp> = match format {
@@ -176,6 +188,7 @@ impl Subtitle {
             timing_line: *timing_line,
             start,
             end,
+            end_suffix: end_suffix.to_string(),
             text,
         })
     }

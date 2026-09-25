@@ -19,6 +19,18 @@ fn run(path: &Path) -> (String, i32) {
     (stdout, code)
 }
 
+fn run_fix(path: &Path) -> (String, String, i32) {
+    let output = Command::new(env!("CARGO_BIN_EXE_subtitle-lint"))
+        .arg("--fix")
+        .arg(path)
+        .output()
+        .expect("failed to run subtitle-lint");
+    let stdout = String::from_utf8(output.stdout).expect("stdout was not utf8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr was not utf8");
+    let code = output.status.code().expect("process terminated by signal");
+    (stdout, stderr, code)
+}
+
 #[test]
 fn backwards_timing_is_an_error() {
     let path = fixture("backwards_timing.srt");
@@ -175,6 +187,60 @@ fn json_format_with_no_findings_is_an_empty_array() {
     let code = output.status.code().expect("process terminated by signal");
 
     assert_eq!(stdout, "[\n]\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn fix_trims_an_overlapping_cue() {
+    let path = fixture("overlap.srt");
+    let (stdout, stderr, code) = run_fix(&path);
+    assert_eq!(
+        stdout,
+        "1\n00:00:01,000 --> 00:00:03,000\nThis is the first line of dialogue.\n\n\
+         2\n00:00:03,000 --> 00:00:06,000\nHere comes a totally different line.\n\n"
+    );
+    assert_eq!(stderr, "subtitle-lint: trimmed 1 overlapping cue(s)\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn fix_leaves_a_clean_file_unchanged() {
+    let path = fixture("clean.vtt");
+    let (stdout, stderr, code) = run_fix(&path);
+    assert_eq!(
+        stdout,
+        "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello and welcome.\n\n\
+         00:00:05.000 --> 00:00:08.000\nThis is a clean file.\n\n"
+    );
+    assert_eq!(stderr, "subtitle-lint: trimmed 0 overlapping cue(s)\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn fix_preserves_vtt_identifiers_notes_and_style() {
+    let path = fixture("vtt_with_notes.vtt");
+    let (stdout, stderr, code) = run_fix(&path);
+    assert_eq!(
+        stdout,
+        "WEBVTT\n\nNOTE\nThis is a note that should be skipped.\n\n\
+         STYLE\n::cue { color: white; }\n\ncue-1\n00:00:01.000 --> 00:00:03.000\n\
+         Alpha bravo charlie delta.\n\n00:00:04.000 --> 00:00:06.000\n\
+         Nothing at all like the first cue.\n\n"
+    );
+    assert_eq!(stderr, "subtitle-lint: trimmed 0 overlapping cue(s)\n");
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn fix_passes_through_an_unparseable_block_untouched() {
+    let path = fixture("malformed.srt");
+    let (stdout, stderr, code) = run_fix(&path);
+    assert_eq!(
+        stdout,
+        "1\n00:00:01,000 --> 00:00:02,000\nFine cue.\n\n\
+         not-a-number\n00:00:03,000 --> 00:00:04,000\nBad index cue.\n\n"
+    );
+    assert_eq!(stderr, "subtitle-lint: trimmed 0 overlapping cue(s)\n");
     assert_eq!(code, 0);
 }
 

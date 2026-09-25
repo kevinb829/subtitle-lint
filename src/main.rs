@@ -23,9 +23,12 @@ fn main() -> ExitCode {
     let mut config_path: Option<String> = None;
     let mut path: Option<String> = None;
     let mut format = OutputFormat::Text;
+    let mut fix_mode = false;
 
     while let Some(arg) = args.next() {
-        if arg == "--config" {
+        if arg == "--fix" {
+            fix_mode = true;
+        } else if arg == "--config" {
             config_path = match args.next() {
                 Some(p) => Some(p),
                 None => {
@@ -60,7 +63,9 @@ fn main() -> ExitCode {
     let path = match path {
         Some(p) => p,
         None => {
-            eprintln!("usage: subtitle-lint [--config FILE] [--format text|json] <file.srt|->");
+            eprintln!(
+                "usage: subtitle-lint [--config FILE] [--format text|json] [--fix] <file.srt|->"
+            );
             return ExitCode::from(2);
         }
     };
@@ -75,6 +80,10 @@ fn main() -> ExitCode {
         },
         None => Config::default(),
     };
+
+    if fix_mode {
+        return run_fix(&path, &config);
+    }
 
     let findings = if path == "-" {
         let stdin = io::stdin();
@@ -104,6 +113,36 @@ fn main() -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Runs in `--fix` mode: rewrites the cue stream to stdout with mechanical
+/// fixes applied (currently just overlap trimming) and reports what changed
+/// on stderr, leaving stdout clean for redirecting straight to a file.
+fn run_fix(path: &str, config: &Config) -> ExitCode {
+    let stdout = io::stdout();
+    let result = if path == "-" {
+        let stdin = io::stdin();
+        linter::fix(stdin.lock(), stdout.lock(), config)
+    } else {
+        match File::open(path) {
+            Ok(file) => linter::fix(BufReader::new(file), stdout.lock(), config),
+            Err(e) => {
+                eprintln!("subtitle-lint: cannot open {}: {}", path, e);
+                return ExitCode::from(2);
+            }
+        }
+    };
+
+    match result {
+        Ok(outcome) => {
+            eprintln!("subtitle-lint: trimmed {} overlapping cue(s)", outcome.overlaps_trimmed);
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("subtitle-lint: {}", e);
+            ExitCode::from(2)
+        }
     }
 }
 

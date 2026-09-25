@@ -50,6 +50,23 @@ $ subtitle-lint --format json movie.srt
 An empty array means no findings. The exit code rule is the same regardless
 of output format.
 
+Pass `--fix` to rewrite the file's mechanical problems instead of just
+reporting them. Today that means overlap trimming: whenever a cue starts
+before the previous one ends, the previous cue's end time is pulled back to
+match. The fixed file is written to stdout, not back to the original path,
+so nothing is overwritten without a redirect:
+
+```
+$ subtitle-lint --fix movie.srt > movie.fixed.srt
+subtitle-lint: trimmed 2 overlapping cue(s)
+```
+
+Everything else — cue indices/identifiers, text, the VTT header, and
+`NOTE`/`STYLE`/`REGION` blocks — passes through unchanged. A block that
+fails to parse is left exactly as found rather than guessed at. `--fix`
+respects `check_overlap` from `--config`: if it's turned off, no trimming
+happens.
+
 Format is detected from the content, not the file extension or a flag: if
 the first block is a `WEBVTT` header, the rest of the stream is read as
 WebVTT (cue identifiers, cue settings, and `NOTE`/`STYLE`/`REGION` blocks
@@ -108,8 +125,8 @@ cargo test
 
 ## Roadmap
 
-Next up: a `--fix` mode for the mechanical cases, starting with trimming
-overlaps so a cue's end time never runs past the next cue's start.
+Next up: `--fix` support for removing empty cues, the other mechanical case
+alongside overlap trimming.
 
 ## License
 

@@ -1,8 +1,8 @@
 use std::fmt;
-use std::io::BufRead;
+use std::io::{self, BufRead, Write};
 
 use crate::config::Config;
-use crate::parser::{BlockError, Format, Subtitle, SubtitleReader};
+use crate::parser::{BlockError, Format, RawBlock, Subtitle, SubtitleReader};
 use crate::timestamp::Timestamp;
 
 // Below this normalized length, short cues ("Yes." / "No.") are too likely
@@ -112,6 +112,146 @@ pub fn lint<R: BufRead>(reader: R, config: &Config) -> Vec<Finding> {
     }
 
     findings
+}
+
+/// What a `fix` run changed, for the caller to report to the user.
+pub struct FixOutcome {
+    pub overlaps_trimmed: usize,
+}
+
+/// A cue held back from the output, one at a time, so it can still be
+/// adjusted once the next cue's start time is known.
+struct PendingCue {
+    prefix_lines: Vec<String>,
+    start: Timestamp,
+    end: Timestamp,
+    end_suffix: String,
+    text_lines: Vec<String>,
+}
+
+impl PendingCue {
+    fn new(raw: &RawBlock, subtitle: &Subtitle) -> PendingCue {
+        let timing_idx = raw
+            .lines
+            .iter()
+            .position(|(n, _)| *n == subtitle.timing_line)
+            .unwrap_or(0);
+        PendingCue {
+            prefix_lines: raw.lines[..timing_idx].iter().map(|(_, s)| s.clone()).collect(),
+            start: subtitle.start,
+            end: subtitle.end,
+            end_suffix: subtitle.end_suffix.clone(),
+            text_lines: subtitle.text.iter().map(|(_, s)| s.clone()).collect(),
+        }
+    }
+}
+
+/// Rewrites a subtitle stream, trimming any cue's end time back to the next
+/// cue's start whenever the two overlap. Everything else — index or
+/// identifier lines, cue text, the VTT header, and NOTE/STYLE/REGION blocks
+/// — is passed through unchanged.
+///
+/// Like `lint`, this holds at most one cue's worth of state: a cue can't be
+/// written until the next one's start time is known, since that's what an
+/// overlap trim needs.
+pub fn fix<R: BufRead, W: Write>(reader: R, mut writer: W, config: &Config) -> io::Result<FixOutcome> {
+    let mut reader = SubtitleReader::new(reader);
+    let mut outcome = FixOutcome { overlaps_trimmed: 0 };
+
+    let mut pending = reader.next_block();
+    let format = if matches!(&pending, Some(Ok(raw)) if raw.is_webvtt_header()) {
+        if let Some(Ok(raw)) = &pending {
+            write_raw_block(&mut writer, raw)?;
+        }
+        pending = reader.next_block();
+        Format::Vtt
+    } else {
+        Format::Srt
+    };
+
+    let mut previous: Option<PendingCue> = None;
+
+    while let Some(block) = pending {
+        pending = reader.next_block();
+
+        let raw = match block {
+            Ok(raw) => raw,
+            Err(BlockError::Io(e)) => {
+                if let Some(p) = previous.take() {
+                    write_cue(&mut writer, format, &p)?;
+                }
+                return Err(e);
+            }
+            Err(BlockError::Malformed { .. }) => continue,
+        };
+
+        if format == Format::Vtt && raw.is_skippable_vtt_block() {
+            if let Some(p) = previous.take() {
+                write_cue(&mut writer, format, &p)?;
+            }
+            write_raw_block(&mut writer, &raw)?;
+            continue;
+        }
+
+        let subtitle = match Subtitle::from_raw(&raw, format) {
+            Ok(s) => s,
+            Err(_) => {
+                // Can't safely rewrite a block that doesn't parse; leave it
+                // exactly as found rather than guessing at its shape.
+                if let Some(p) = previous.take() {
+                    write_cue(&mut writer, format, &p)?;
+                }
+                write_raw_block(&mut writer, &raw)?;
+                continue;
+            }
+        };
+
+        if let Some(mut p) = previous.take() {
+            if config.check_overlap && subtitle.start < p.end {
+                p.end = subtitle.start;
+                outcome.overlaps_trimmed += 1;
+            }
+            write_cue(&mut writer, format, &p)?;
+        }
+
+        previous = Some(PendingCue::new(&raw, &subtitle));
+    }
+
+    if let Some(p) = previous.take() {
+        write_cue(&mut writer, format, &p)?;
+    }
+
+    Ok(outcome)
+}
+
+fn write_cue<W: Write>(writer: &mut W, format: Format, cue: &PendingCue) -> io::Result<()> {
+    for line in &cue.prefix_lines {
+        writeln!(writer, "{}", line)?;
+    }
+    match format {
+        Format::Srt => writeln!(writer, "{} --> {}", cue.start, cue.end)?,
+        Format::Vtt if cue.end_suffix.is_empty() => {
+            writeln!(writer, "{} --> {}", cue.start.to_vtt_string(), cue.end.to_vtt_string())?
+        }
+        Format::Vtt => writeln!(
+            writer,
+            "{} --> {} {}",
+            cue.start.to_vtt_string(),
+            cue.end.to_vtt_string(),
+            cue.end_suffix
+        )?,
+    }
+    for line in &cue.text_lines {
+        writeln!(writer, "{}", line)?;
+    }
+    writeln!(writer)
+}
+
+fn write_raw_block<W: Write>(writer: &mut W, raw: &RawBlock) -> io::Result<()> {
+    for (_, line) in &raw.lines {
+        writeln!(writer, "{}", line)?;
+    }
+    writeln!(writer)
 }
 
 fn check_ordering(subtitle: &Subtitle, findings: &mut Vec<Finding>) {
